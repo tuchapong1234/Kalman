@@ -19,22 +19,31 @@ using namespace BLA;
 /****  MODELIZATION PARAMETERS  ****/
 //------------------------------------
 
-#define Nstate 3 // position, speed, acceleration
-#define Nobs 2   // position, acceleration
+#define Nstate 4 // position, velocity, external load, current
+#define Nobs 2   // Position, velocity
 
 // measurement std of the noise
 #define n_p 0.3 // position measurement noise
-#define n_a 5.0 // acceleration measurement noise
+#define n_v 5.0 // velocity measurement noise
 
 // model std (1/inertia)
 #define m_p 0.1
-#define m_s 0.1
-#define m_a 0.8
+#define m_v 0.1
+#define m_l 0.8
+#define m_i 0.8
 
 BLA::Matrix<Nobs> obs; // observation vector
 KALMAN<Nstate,Nobs> K; // your Kalman filter
 unsigned long T; // current time
 float DT; // delay between two updates of the filter
+
+float B;
+float J;
+float Kt;
+float L;
+float R;
+float Kb;
+
 
 // Note: I made 'obs' a global variable so memory is allocated before the loop.
 //       This might provide slightly better speed efficiency in loop.
@@ -62,20 +71,24 @@ void setup() {
   Serial.begin(57600);
 
   // time evolution matrix (whatever... it will be updated inloop)
-  K.F = {1.0, 0.0, 0.0,
-		 0.0, 1.0, 0.0,
-         0.0, 0.0, 1.0};
+  K.F = {1.0, 0.0, 0.0, 0.0,
+		     0.0, 1.0, 0.0, 0.0,
+         0.0, 0.0, 1.0, 0.0,
+         0.0, 0.0, 0.0, 1.0};
 
   // measurement matrix n the position (e.g. GPS) and acceleration (e.g. accelerometer)
-  K.H = {1.0, 0.0, 0.0,
-         0.0, 0.0, 1.0};
+  K.H = {0.0, 0.0,
+         0.0, 0.0,
+         0.0, 1.0,
+         -1/L, 0.0};
   // measurement covariance matrix
   K.R = {n_p*n_p,   0.0,
-           0.0, n_a*n_a};
+           0.0, n_v*n_v};
   // model covariance matrix
-  K.Q = {m_p*m_p,     0.0,     0.0,
-             0.0, m_s*m_s,     0.0,
-			 0.0,     0.0, m_a*m_a};
+  K.Q = {m_p*m_p, 0.0, 0.0, 0.0,
+        0.0, m_v*m_v, 0.0, 0.0,
+			  0.0, 0.0, m_l*m_l, 0.0,
+        0.0, 0.0, 0.0, m_i*m_i};
   
   T = millis();
   
@@ -95,9 +108,10 @@ void loop() {
   // position_{k+1} = position_{k} + DT*speed_{k} + (DT*DT/2)*acceleration_{k}
   // speed_{k+1}    = speed_{k} + DT*acceleration_{k}
   // acceleration_{k+1} = acceleration_{k}
-  K.F = {1.0,  DT,  DT*DT/2,
-		 0.0, 1.0,       DT,
-         0.0, 0.0,      1.0};
+  K.F = {1/DT,  0.0,  0.0, 0.0,
+		     0.0, -B/J,  -1/J, Kt/J,
+         0.0, 0.0,  0.0, 0.0,
+         0.0, Kb/L,  0.0, R/L};
 
   // UPDATE THE SIMULATED PHYSICAL PROCESS
   SIMULATOR_UPDATE();
@@ -138,7 +152,7 @@ void SIMULATOR_MEASURE(){
   // Simulate a noisy measurement of the physical process
   BLA::Matrix<Nobs> noise;
   noise(0) = n_p * SIMULATOR_GAUSS_NOISE();
-  noise(1) = n_a * SIMULATOR_GAUSS_NOISE();
+  noise(1) = n_v * SIMULATOR_GAUSS_NOISE();
   obs = K.H * state + noise; // measurement
   delay(LOOP_DELAY); //simulate a delay in the measurement
 }
